@@ -17,7 +17,7 @@ class GameRoom {
         ];
         this.answers = new Map(); // playerId -> answers array
         this.currentRound = 0;
-        this.totalRounds = 10;
+        this.totalRounds = 5;
         this.scores = new Map();
         this.votes = new Map(); // playerId -> votedForPlayerId
         this.currentRoundData = null;
