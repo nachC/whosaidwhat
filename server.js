@@ -13,12 +13,7 @@ class GameRoom {
             { type: 'text', question: "What's your biggest fear?" },
             { type: 'youtube', question: "What's your favorite song? (Share YouTube link)" },
             { type: 'text', question: "What's your dream vacation destination?" },
-            { type: 'image', question: "Upload a photo of your pet or favorite animal" },
-            { type: 'text', question: "What's your hidden talent?" },
-            { type: 'text', question: "What's the weirdest food you've ever eaten?" },
-            { type: 'image', question: "Upload a photo of your favorite meal" },
-            { type: 'text', question: "What's your most embarrassing moment?" },
-            { type: 'youtube', question: "Share a song that makes you happy (YouTube link)" }
+            { type: 'image', question: "Upload a photo of you when you were little" }
         ];
         this.answers = new Map(); // playerId -> answers array
         this.currentRound = 0;
@@ -130,6 +125,8 @@ class GameRoom {
             // Check if all players are ready
             const allReady = Array.from(this.players.values()).every(p => p.ready);
             if (allReady && this.players.size > 1) {
+                // Important: Change game state to ready to start
+                this.gameState = 'readyToStart';
                 this.broadcast({
                     type: 'allPlayersReady'
                 });
@@ -138,9 +135,16 @@ class GameRoom {
     }
 
     startGame() {
+        // Only allow starting if we're in the right state
+        if (this.gameState !== 'readyToStart') {
+            console.log('Attempted to start game but not ready. Current state:', this.gameState);
+            return false;
+        }
+        
         this.gameState = 'playing';
         this.currentRound = 0;
         this.startNextRound();
+        return true;
     }
 
     startNextRound() {
@@ -174,6 +178,7 @@ class GameRoom {
         
         if (!playerAnswers || Object.keys(playerAnswers).length === 0) {
             // Fallback if no answers
+            console.log('Warning: No answers found for player', randomPlayerId);
             return {
                 question: "What's your favorite color?",
                 answer: "Blue",
@@ -202,9 +207,10 @@ class GameRoom {
         
         this.votes.set(playerId, votedForPlayerId);
         
-        // Check if all players have voted
-        const expectedVoters = this.players.size;
-        if (this.votes.size >= expectedVoters - 1) { // -1 because the answer author can't vote
+        // Check if all eligible players have voted
+        // Eligible voters = all players except the one who gave the answer
+        const eligibleVoters = this.players.size - 1;
+        if (this.votes.size >= eligibleVoters) {
             this.processRoundResults();
         }
     }
@@ -250,6 +256,7 @@ class GameRoom {
     startRoundTimer() {
         this.roundTimer = setTimeout(() => {
             // Force end round if time runs out
+            console.log('Round timer expired, processing results');
             this.processRoundResults();
         }, 35000); // 35 seconds (30 + 5 buffer)
     }
@@ -377,6 +384,7 @@ function handleMessage(ws, data) {
 
         case 'questionAnswered':
             gameRoom.submitAnswer(ws.playerId, data.questionIndex, data.answer);
+            console.log(`Player ${ws.playerId} answered question ${data.questionIndex}`);
             break;
 
         case 'questionsCompleted':
@@ -386,13 +394,24 @@ function handleMessage(ws, data) {
 
         case 'startGame':
             if (ws.playerId === gameRoom.hostId) {
-                gameRoom.startGame();
-                console.log('Game started');
+                const started = gameRoom.startGame();
+                if (started) {
+                    console.log('Game started by host');
+                } else {
+                    console.log('Failed to start game - not ready');
+                    ws.send(JSON.stringify({
+                        type: 'error',
+                        message: 'Game not ready to start'
+                    }));
+                }
+            } else {
+                console.log('Non-host tried to start game');
             }
             break;
 
         case 'vote':
             gameRoom.submitVote(ws.playerId, data.votedFor);
+            console.log(`Player ${ws.playerId} voted for ${data.votedFor}`);
             break;
 
         case 'nextRound':
@@ -424,7 +443,8 @@ server.on('request', (req, res) => {
         res.end(JSON.stringify({
             status: 'healthy',
             players: gameRoom.players.size,
-            gameState: gameRoom.gameState
+            gameState: gameRoom.gameState,
+            currentRound: gameRoom.currentRound
         }));
     } else {
         res.writeHead(404);
