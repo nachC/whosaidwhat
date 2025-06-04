@@ -28,7 +28,7 @@ class GameRoom {
     addPlayer(ws, name) {
         const playerId = this.generatePlayerId();
         const isHost = this.players.size === 0;
-        
+
         if (isHost) {
             this.hostId = playerId;
         }
@@ -110,7 +110,7 @@ class GameRoom {
             this.answers.set(playerId, {});
         }
         this.answers.get(playerId)[questionIndex] = answer;
-        
+
         const player = this.players.get(playerId);
         if (player) {
             player.answered = true;
@@ -121,10 +121,16 @@ class GameRoom {
         const player = this.players.get(playerId);
         if (player) {
             player.ready = true;
-            
+            console.log(`Player ${playerId} marked as ready`);
+
             // Check if all players are ready
             const allReady = Array.from(this.players.values()).every(p => p.ready);
+            const readyCount = Array.from(this.players.values()).filter(p => p.ready).length;
+
+            console.log(`Ready check: ${readyCount}/${this.players.size} players ready, allReady: ${allReady}`);
+
             if (allReady && this.players.size > 1) {
+                console.log('All players ready! Changing state to readyToStart');
                 // Important: Change game state to ready to start
                 this.gameState = 'readyToStart';
                 this.broadcast({
@@ -140,7 +146,7 @@ class GameRoom {
             console.log('Attempted to start game but not ready. Current state:', this.gameState);
             return false;
         }
-        
+
         this.gameState = 'playing';
         this.currentRound = 0;
         this.startNextRound();
@@ -175,7 +181,7 @@ class GameRoom {
         const playerIds = Array.from(this.players.keys());
         const randomPlayerId = playerIds[Math.floor(Math.random() * playerIds.length)];
         const playerAnswers = this.answers.get(randomPlayerId);
-        
+
         if (!playerAnswers || Object.keys(playerAnswers).length === 0) {
             // Fallback if no answers
             console.log('Warning: No answers found for player', randomPlayerId);
@@ -204,9 +210,9 @@ class GameRoom {
         if (playerId === votedForPlayerId) {
             return; // Can't vote for yourself
         }
-        
+
         this.votes.set(playerId, votedForPlayerId);
-        
+
         // Check if all eligible players have voted
         // Eligible voters = all players except the one who gave the answer
         const eligibleVoters = this.players.size - 1;
@@ -263,7 +269,7 @@ class GameRoom {
 
     endGame() {
         this.gameState = 'finished';
-        
+
         const finalScores = {};
         this.scores.forEach((score, playerId) => {
             finalScores[playerId] = score;
@@ -282,7 +288,7 @@ class GameRoom {
         this.scores.clear();
         this.votes.clear();
         this.currentRoundData = null;
-        
+
         if (this.roundTimer) {
             clearTimeout(this.roundTimer);
             this.roundTimer = null;
@@ -323,7 +329,7 @@ wss.on('connection', (ws, req) => {
         if (ws.playerId) {
             console.log(`Player ${ws.playerId} disconnected`);
             gameRoom.removePlayer(ws.playerId);
-            
+
             // Notify other players
             gameRoom.broadcast({
                 type: 'playerLeft',
@@ -338,6 +344,8 @@ wss.on('connection', (ws, req) => {
 });
 
 function handleMessage(ws, data) {
+    console.log(`Received message: ${data.type} from player ${ws.playerId}`); // Debug log
+
     switch (data.type) {
         case 'join':
             if (gameRoom.players.size >= 10) {
@@ -349,7 +357,7 @@ function handleMessage(ws, data) {
             }
 
             const player = gameRoom.addPlayer(ws, data.name);
-            
+
             // Send confirmation to player
             ws.send(JSON.stringify({
                 type: 'playerJoined',
@@ -371,7 +379,7 @@ function handleMessage(ws, data) {
                 },
                 players: gameRoom.getPlayersData()
             }, player.id);
-            
+
             console.log(`Player ${player.name} joined (${gameRoom.players.size}/10)`);
             break;
 
@@ -388,17 +396,30 @@ function handleMessage(ws, data) {
             break;
 
         case 'questionsCompleted':
+            console.log(`Player ${ws.playerId} completed questions. Current ready players:`,
+                Array.from(gameRoom.players.values()).filter(p => p.ready).length);
+
             gameRoom.markPlayerReady(ws.playerId);
-            console.log(`Player ${ws.playerId} completed questions`);
+
+            // Debug: Show how many players are ready vs total
+            const readyPlayers = Array.from(gameRoom.players.values()).filter(p => p.ready).length;
+            const totalPlayers = gameRoom.players.size;
+            console.log(`Ready players: ${readyPlayers}/${totalPlayers}`);
+
+            // Debug: Show current game state
+            console.log('Current game state:', gameRoom.gameState);
             break;
 
         case 'startGame':
+            console.log(`Start game request from ${ws.playerId}, is host: ${ws.playerId === gameRoom.hostId}`);
+            console.log('Current game state:', gameRoom.gameState);
+
             if (ws.playerId === gameRoom.hostId) {
                 const started = gameRoom.startGame();
                 if (started) {
                     console.log('Game started by host');
                 } else {
-                    console.log('Failed to start game - not ready');
+                    console.log('Failed to start game - not ready. Current state:', gameRoom.gameState);
                     ws.send(JSON.stringify({
                         type: 'error',
                         message: 'Game not ready to start'
@@ -437,7 +458,7 @@ function handleMessage(ws, data) {
 // Health check endpoint
 server.on('request', (req, res) => {
     const pathname = url.parse(req.url).pathname;
-    
+
     if (pathname === '/health') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
